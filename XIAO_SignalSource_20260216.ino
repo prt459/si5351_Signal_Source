@@ -1,5 +1,5 @@
 /*  
-Signal source fortesting receivers etc
+Signal source for testing receivers etc
 Written for Arduino Nano or XIAO ESP32 and si5351 breakout  
 Written by Paul VK3HN (https://vk3hn.wordpress.com/) 
 // I2C devices and addresses:
@@ -9,6 +9,10 @@ Written by Paul VK3HN (https://vk3hn.wordpress.com/)
 Labels that need to be #define'd for your target radio/rig/project:
   Display technology     {DISPLAY_LCD, DISPLAY_OLED}
 
+Known bugs:
+- EEPROM bytes 4..7 (step_f) not being written and read properly on ESP32
+
+
 */
 #define DISPLAY_OLED128x32
 //#define DISPLAY_LCD
@@ -16,12 +20,17 @@ Labels that need to be #define'd for your target radio/rig/project:
 
 #include <SPI.h>
 #include <Wire.h>
+#include <EEPROM.h>
+#define EEPROM_ADDR 0    // starting address
+#define EEPROM_SIZE 512  // reserve EEPROM bytes
+
 
 #include <si5351.h>     // Etherkit si3531 library from NT7S,  V2.1.4   https://github.com/etherkit/Si5351Arduino 
 Si5351 si5351;          // I2C address defaults to x60 in the NT7S lib
-unsigned long int  freq_hz = 144060000;  
+unsigned long int  freq_hz =  14060000;  
 //unsigned long int  freq_hz = 14061000;  // Set your preferred initial frequency here
-unsigned long int  step_f  =  1000;     // frequency step defaults to 1kHz
+unsigned long      step_f  =  1000;     // frequency step defaults to 1kHz
+//unsigned long      step_f;     // frequency step, read from EEPROM 
 
 // Displays and display code
 
@@ -46,24 +55,27 @@ void refresh_OLED128x32()
   oled128x32.setCursor(0, 0);
 
   sprintf(fb, "%d", freq_hz);
-  // Serial.print(fb); Serial.println('/');
+  //Serial.print(fb); Serial.println('/');
  
   String s(fb);
   //Serial.print(s); Serial.println('/');
   byte k=0;
-  oled128x32.print(s.charAt(k));
-  if((freq_hz/1000000) > 100) oled128x32.print(s.charAt(++k));
-  if((freq_hz/1000000) >= 10) oled128x32.print(s.charAt(++k));
-  if((freq_hz/1000000000) >= 10) oled128x32.print(s.charAt(++k));
+  //oled128x32.print(s.charAt(k++));
+  unsigned int mhz = freq_hz/1000000;
+  //Serial.print(mhz); Serial.println('!');
+  if(mhz > 100) { oled128x32.print(s.charAt(k)); k++; };
+  if(mhz >= 10) { oled128x32.print(s.charAt(k)); k++; };
+  if(mhz >=  1) { oled128x32.print(s.charAt(k)); k++; };
+ // if((freq_hz/1000000000) >= 10) oled128x32.print(s.charAt(++k));
 
   oled128x32.print(',');
   //if((freq_hz/1000000) < 100) oled128x32.print(',');
   //else oled128x32.print(s.charAt(++k));
   
   byte j;
-  for (j=k+1; j<=(k+3); j++) oled128x32.print(s.charAt(j));
+  for (j=k; j<=(k+2); j++) oled128x32.print(s.charAt(j));
   oled128x32.print('.');
-  oled128x32.print(s.charAt(j+1));
+  oled128x32.print(s.charAt(k+3));
 
   // write row 2...
   oled128x32.setCursor(0, 18);
@@ -75,6 +87,7 @@ void refresh_OLED128x32()
   else if(step_f == 100000) oled128x32.print("100kHz");
   else if(step_f == 10000) oled128x32.print("10kHz");
   else if(step_f == 1000) oled128x32.print("1kHz");
+  else if(step_f == 100) oled128x32.print("100Hz");
   oled128x32.display();
   delay(1);
 };
@@ -99,37 +112,37 @@ void refresh_LCD() {
   uint16_t f_MHz, f_kHz, f_Hz, f;
   uint32_t vfo_l;
 
-  lcd.setCursor(0, 0);
+  // line 1
+  lcd.clear();
+  lcd.print("F0: ");   // Future enhancement will provide for two outputs
   f = freq_hz / 1000000;  
   if(f<900) lcd.print(' ');
   if(f<10) lcd.print(' ');
   lcd.print(f);
   lcd.print(',');
-
+  
   f_MHz = (freq_hz % 1000000) / 1000;
   if (f_MHz < 100) lcd.print('0');
   if (f_MHz < 10) lcd.print('0');
   lcd.print(f_MHz);
   lcd.print(',');
  
-  f_kHz = freq_h % 1000;
+  f_kHz = freq_hz % 1000;
   if (f_kHz < 100) lcd.print('0');
   if (f_kHz < 10) lcd.print('0');
   lcd.print(f_kHz);
-  lcd.print('.');
+  //lcd.print('.');      Don't display values after the decimal point
 
-  f_Hz = freq_h % 10;
-  if (f_Hz < 10) lcd.print('0');
-  lcd.print(f_Hz);
- 
-//  lcd.print(" ");
+  //f_Hz = freq_hz % 10;
+  //if (f_Hz < 10) lcd.print('0');
+  //lcd.print(f_Hz); 
 
 // line 2
   lcd.setCursor(0, 1);  // start of line 2
   lcd.print("Step: ");
-  lcd.print(step_hz);  
+  //lcd.print(step_f);   This statement not needed 
  
-  switch (step_hz) {      
+  switch (step_f) {      
     case 100:
       lcd.print("100Hz");
     break;
@@ -137,13 +150,13 @@ void refresh_LCD() {
       lcd.print("1kHz");
     break;
     case 10000:
-      lcd.pint("10kHz");
+      lcd.print("10kHz");
     break;
     case 100000:
-      lcd.pint("100kHz");
+      lcd.print("100kHz");
     break;
     case 1000000:
-      lcd.pint("1MHz");
+      lcd.print("1MHz");
     break;
   }
 }
@@ -153,10 +166,10 @@ void refresh_LCD() {
 
 #if defined(ARDUINO_AVR_UNO) || defined(ARDUINO_AVR_NANO) || defined(__AVR_ATmega328P__)
 //  Nano/ATMega328 button pinouts 
-#define BUTTON_UP 2  // A2 to 'Freq up' button
-#define BUTTON_DN 4  // D4 to 'Freq down' button
-#define STEP_UP   5  // D5 to 'Step' button
-#define PTT       7  // D7 is Tx enable (high) for controlling downstream stages 
+#define BUTTON_UP A0  // 'Freq up' button
+#define BUTTON_DN A2  // 'Freq down' button
+#define STEP_UP   A1  // 'Step' button
+#define PTT       7  //   Tx enable (high) for controlling downstream stages 
 #endif
 
 #if defined(ESP32)
@@ -178,8 +191,66 @@ byte n = 0;
 #define LINE_LENGTH_CHARS 40
 
 
+void readMyEEPROM()
+{
+// Read freq and step back from EEPROM
+  unsigned long int readValue = 0;
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 0) << 24);  // MSB
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 1) << 16);
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 2) <<  8);
+  readValue |=  EEPROM.read(EEPROM_ADDR + 3);                       // LSB
+  Serial.print("Read from x00:");  Serial.println((unsigned long)readValue );
+  freq_hz = readValue; 
+  if(readValue == 0) freq_hz = 7032000; 
+
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 4) << 24);  // MSB
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 5) << 16);
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 6) <<  8);
+  readValue |=  EEPROM.read(EEPROM_ADDR + 7);                       // LSB
+  Serial.print("Read from x03:");  Serial.println((unsigned long)readValue);
+//  step_f = readValue; 
+//  if(step_f == 0) step_f = 1000;  
+}
+
+
 void setup() {
   Serial.begin(9600);
+
+#if defined(ESP32)
+  EEPROM.begin(EEPROM_SIZE);   // must call once
+#endif
+// Read freq and step back from EEPROM
+  unsigned long readValue = 0;
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 0) << 24);  // MSB
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 1) << 16);
+  readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 2) <<  8);
+  readValue |=  EEPROM.read(EEPROM_ADDR + 3);                       // LSB
+  Serial.print("Read from x00:");  Serial.println((unsigned long)readValue );
+  freq_hz = readValue; 
+  if(readValue == 0) freq_hz = 7032000; 
+
+  // read the step size
+  uint8_t b = EEPROM.read(EEPROM_ADDR + 4); 
+  Serial.print("Read from x04:");  Serial.println(b);
+  switch(b) {
+        case 1: step_f = 1000000; break; 
+        case 2: step_f = 100000; break; 
+        case 3: step_f = 10000; break; 
+        case 4: step_f = 1000; break; 
+        case 5: step_f = 100; break; 
+  };
+  
+
+//readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 5) << 16);
+// readValue |= ((unsigned long )EEPROM.read(EEPROM_ADDR + 6) <<  8);
+//  readValue |=  EEPROM.read(EEPROM_ADDR + 7);                       // LSB
+//  Serial.print("Read from x03:");  Serial.println((unsigned long)readValue);
+  //step_f = readValue; 
+  //if(step_f == 0) step_f = 1000;   
+ 
+  //Serial.print("setup freq="); Serial.println(freq_hz);
+  //Serial.print("setup step="); Serial.println(step_f);
+
 
   // initialise and start the si5351 clocks
 
@@ -217,20 +288,13 @@ void setup() {
   lcd.setCursor(0,0);
   lcd.print("si5351 SigGen");
   lcd.setCursor(0,1);
-  lcd.print("VK3HN 12/07/2020");
+  lcd.print("VK3HN 20/02/2026");
   delay(2000);
   lcd.clear();
   refresh_LCD(); 
 #endif
-  //Serial.println("setup");
+
 }
-
-
-//void setVfoFrequency(unsigned long int f) {
-//  si5351.set_freq(f * SI5351_FREQ_MULT, SI5351_CLK0); //  
-  //Serial.print("set frequency: ");  Serial.println(frequency);
-  //printSi5351Status();
-//}
 
 
 char readPbtns()
@@ -304,12 +368,13 @@ void loop()
 
    // check pushbuttons
   char b = readPbtns();
-  bool changed = 0;
+  bool changed_f = 0, changed_s = 0;
+
   if(b == 'u')
   {
     // PB1 pressed
     Serial.print(" up ");
-    changed = 1;
+    changed_f = 1;
     freq_hz = freq_hz + step_f;
     delay(100);
   }
@@ -317,7 +382,7 @@ void loop()
   {
     // PB2 pressed
     Serial.print(" down ");
-    changed = 1;
+    changed_f = 1;
     if(freq_hz >= step_f) freq_hz = freq_hz - step_f;
     delay(100);
   }
@@ -327,26 +392,61 @@ void loop()
     if(step_f == 1000000) step_f = 100000;
     else if(step_f == 100000) step_f = 10000;
     else if(step_f == 10000) step_f = 1000;
-    else if(step_f == 1000) step_f = 1000000;
+    else if(step_f == 1000) step_f = 100;
+    else if(step_f == 100) step_f = 1000000;
     Serial.print(" step=");
     Serial.println(step_f);
-    changed = 1;
+    changed_s = 1;
     delay(100);
   };
 
-  if(changed)
+if(changed_f or changed_s)
   {
-    si5351.set_freq(freq_hz * SI5351_FREQ_MULT, SI5351_CLK0);
-    Serial.print(freq_hz);
-    Serial.print(" (");
-    Serial.print(step_f);
-    Serial.println(')');
+    // frequency or step changed 
+
+    if(changed_f)
+    {
+      si5351.set_freq(freq_hz * SI5351_FREQ_MULT, SI5351_CLK0);
+      //Serial.print(freq_hz);
+
+      EEPROM.write(EEPROM_ADDR + 0, (freq_hz >> 24) & 0xFF);  // MSB
+      EEPROM.write(EEPROM_ADDR + 1, (freq_hz >> 16) & 0xFF);
+      EEPROM.write(EEPROM_ADDR + 2, (freq_hz >>  8) & 0xFF);
+      EEPROM.write(EEPROM_ADDR + 3,  freq_hz        & 0xFF);  // LSB
+    }
+    else if(changed_s)
+    {
+      Serial.print(" (");
+      Serial.print(step_f);
+      Serial.println(')');
+
+      uint8_t b; 
+      switch(step_f) {
+        case 1000000: b = 1; break; 
+        case 100000: b = 2; break; 
+        case 10000: b = 3; break; 
+        case 1000: b = 4; break; 
+        case 100: b = 5; break; 
+      };
+      EEPROM.write(EEPROM_ADDR + 4, b);  // MSB
+      //EEPROM.write(EEPROM_ADDR + 5, (step_f >> 16) & 0xFF);
+      //EEPROM.write(EEPROM_ADDR + 6, (step_f >>  8) & 0xFF);
+      //EEPROM.write(EEPROM_ADDR + 7,  step_f        & 0xFF);  // LSB
+    };
+#if defined(ESP32)
+    EEPROM.commit();  // must call to actually save to flash 
+#endif
+
 #ifdef DISPLAY_LCD
     refresh_LCD(); 
-    #endif
+#endif
 #ifdef DISPLAY_OLED128x32
     refresh_OLED128x32(); 
 #endif
-    changed = 0; 
+    delay(5);
+    //readMyEEPROM();
+    delay(5); 
+    changed_f = 0; 
+    changed_s = 0;
   } 
 }
